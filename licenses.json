@@ -1,0 +1,14 @@
+{
+  "licenses": {
+    "PHUTRAN-TEST-001": {
+      "licenseKey": "PHUTRAN-TEST-001",
+      "expiresAt": 1778719085,
+      "revoked": true,
+      "deviceID": "D77130A3-6714-4AF1-B008-7F4CE2F40925",
+      "createdAt": 1778459885,
+      "lastCheckAt": 1778460434,
+      "lastAction": "check",
+      "lastAppVersion": "V19"
+    }
+  }
+}
