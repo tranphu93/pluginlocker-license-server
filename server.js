@@ -155,8 +155,8 @@ app.get("/admin", (req, res) => {
     body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f1115; color: #f5f5f5; }
     header { padding: 22px 28px; border-bottom: 1px solid #282c35; background: #151820; position: sticky; top: 0; z-index: 10; }
     h1 { margin: 0; font-size: 24px; }
-    main { padding: 24px 28px 40px; max-width: 1280px; margin: 0 auto; }
-    .grid { display: grid; grid-template-columns: 360px 1fr; gap: 18px; align-items: start; }
+    main { padding: 24px 28px 40px; max-width: 1500px; margin: 0 auto; }
+    .grid { display: grid; grid-template-columns: 360px minmax(900px, 1fr); gap: 18px; align-items: start; }
     .card { background: #171a22; border: 1px solid #2a2f3a; border-radius: 14px; padding: 16px; box-shadow: 0 10px 28px rgba(0,0,0,.25); }
     label { display: block; font-size: 12px; color: #a8b0c0; margin: 10px 0 6px; }
     input, button { font: inherit; }
@@ -171,17 +171,17 @@ app.get("/admin", (req, res) => {
     .row > * { flex: 1; }
     .toolbar { display: flex; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
     .toolbar input { max-width: 360px; }
-    table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 12px; }
-    th, td { padding: 10px; border-bottom: 1px solid #292f3a; text-align: left; vertical-align: top; font-size: 13px; }
-    th { color: #a8b0c0; background: #11141b; position: sticky; top: 80px; z-index: 5; }
+    table { width: 100%; min-width: 1050px; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+    th, td { padding: 14px 10px; border-bottom: 1px solid #292f3a; text-align: left; vertical-align: top; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+    th { color: #a8b0c0; background: #11141b; position: static; z-index: auto; }
     tr:hover td { background: #1c2130; }
     .pill { display: inline-block; border-radius: 999px; padding: 3px 8px; font-size: 12px; font-weight: 700; }
     .ok { background: rgba(22,163,74,.18); color: #4ade80; }
     .bad { background: rgba(220,38,38,.18); color: #f87171; }
     .warn { background: rgba(217,119,6,.18); color: #fbbf24; }
     .muted { color: #8b94a7; font-size: 12px; }
-    .actions { display: flex; gap: 6px; flex-wrap: wrap; }
-    pre { white-space: pre-wrap; word-break: break-word; background: #0f1117; border: 1px solid #2a2f3a; border-radius: 10px; padding: 10px; min-height: 40px; color: #cbd5e1; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; min-width: 230px; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #0f1117; border: 1px solid #2a2f3a; border-radius: 10px; padding: 10px; min-height: 40px; max-height: 260px; overflow: auto; color: #cbd5e1; }
     @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } th { position: static; } }
   </style>
 </head>
@@ -227,16 +227,16 @@ app.get("/admin", (req, res) => {
 
         <div class="muted" id="summaryText">Chưa tải dữ liệu.</div>
 
-        <div style="overflow:auto; margin-top:12px">
+        <div style="overflow-x:auto; overflow-y:visible; margin-top:12px; padding-bottom:8px">
           <table>
             <thead>
               <tr>
-                <th>License</th>
-                <th>Trạng thái</th>
-                <th>Máy đang dùng</th>
-                <th>Thời hạn</th>
-                <th>Lần cuối</th>
-                <th>Thao tác</th>
+                <th style="width:200px">License</th>
+                <th style="width:110px">Trạng thái</th>
+                <th style="width:240px">Máy đang dùng</th>
+                <th style="width:160px">Thời hạn</th>
+                <th style="width:170px">Lần cuối</th>
+                <th style="width:250px">Thao tác</th>
               </tr>
             </thead>
             <tbody id="licenseRows"></tbody>
