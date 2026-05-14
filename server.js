@@ -75,17 +75,27 @@ app.post("/api/license", (req, res) => {
     });
   }
 
-  if (!license.deviceID) {
-    license.deviceID = deviceID;
+  if (!Array.isArray(license.deviceIDs)) {
+    license.deviceIDs = license.deviceID ? [license.deviceID] : [];
   }
 
-  if (license.deviceID !== deviceID) {
-    return res.json({
-      valid: false,
-      expiresAt: 0,
-      message: "Giấy phép này đang được dùng trên máy khác"
-    });
+  if (!license.maxDevices || Number(license.maxDevices) < 1) {
+    license.maxDevices = 1;
   }
+
+  if (!license.deviceIDs.includes(deviceID)) {
+    if (license.deviceIDs.length >= Number(license.maxDevices)) {
+      return res.json({
+        valid: false,
+        expiresAt: 0,
+        message: `Giấy phép này đã đủ ${license.maxDevices} máy sử dụng`
+      });
+    }
+
+    license.deviceIDs.push(deviceID);
+  }
+
+  license.deviceID = license.deviceIDs[0] || "";
 
   license.lastCheckAt = now;
   license.lastAction = action || "check";
@@ -100,7 +110,7 @@ app.post("/api/license", (req, res) => {
 });
 
 function createLicenseHandler(req, res) {
-  const { adminToken, licenseKey, days } = req.body;
+  const { adminToken, licenseKey, days, maxDevices } = req.body;
 
   if (adminToken !== ADMIN_TOKEN) {
     return res.status(403).json({ ok: false, message: "Sai admin token" });
@@ -122,6 +132,8 @@ function createLicenseHandler(req, res) {
     expiresAt: now + Number(days) * 24 * 60 * 60,
     revoked: false,
     deviceID: "",
+    deviceIDs: [],
+    maxDevices: Math.max(1, Number(maxDevices || 1)),
     createdAt: now,
     lastCheckAt: 0,
     lastAction: "",
@@ -203,7 +215,10 @@ app.get("/admin", (req, res) => {
         <input id="licenseKey" placeholder="PL-USER-30DAYS-001" />
 
         <label>Số ngày</label>
-        <input id="days" type="number" min="1" value="30" />
+        <input id="days" type="number" min="1" step="1" value="30" />
+
+        <label>Số máy tối đa</label>
+        <input id="maxDevices" type="number" min="1" step="1" value="1" />
 
         <div class="row" style="margin-top:12px">
           <button onclick="createLicense()">Tạo / Gia hạn</button>
@@ -233,7 +248,7 @@ app.get("/admin", (req, res) => {
               <tr>
                 <th style="width:200px">License</th>
                 <th style="width:110px">Trạng thái</th>
-                <th style="width:240px">Máy đang dùng</th>
+                <th style="width:270px">Máy đang dùng</th>
                 <th style="width:160px">Thời hạn</th>
                 <th style="width:170px">Lần cuối</th>
                 <th style="width:250px">Thao tác</th>
@@ -302,7 +317,8 @@ app.get("/admin", (req, res) => {
         const payload = {
           adminToken: getToken(),
           licenseKey: $("licenseKey").value.trim().toUpperCase(),
-          days: Number($("days").value || 30)
+          days: Number($("days").value || 30),
+          maxDevices: Number($("maxDevices").value || 1)
         };
 
         const data = await api("/api/admin/create-license", payload);
@@ -395,7 +411,7 @@ app.get("/admin", (req, res) => {
         return '<tr>' +
           '<td><b>' + escapeText(key) + '</b><div class="muted">created: ' + escapeText(formatDate(item.createdAt)) + '</div></td>' +
           '<td>' + statusFor(item) + '</td>' +
-          '<td><div>' + escapeText(item.deviceID || "Chưa gắn máy") + '</div><div class="muted">app: ' + escapeText(item.lastAppVersion || "-") + '</div></td>' +
+          '<td><div style="white-space:pre-line">' + escapeText((item.deviceIDs && item.deviceIDs.length ? item.deviceIDs.join("\n") : (item.deviceID || "Chưa gắn máy"))) + '</div><div class="muted">' + escapeText((item.deviceIDs ? item.deviceIDs.length : (item.deviceID ? 1 : 0)) + "/" + (item.maxDevices || 1)) + ' máy</div><div class="muted">app: ' + escapeText(item.lastAppVersion || "-") + '</div></td>' +
           '<td><div>' + escapeText(remainingText(item)) + '</div><div class="muted">' + escapeText(formatDate(item.expiresAt)) + '</div></td>' +
           '<td><div>' + escapeText(formatDate(item.lastCheckAt)) + '</div><div class="muted">action: ' + escapeText(item.lastAction || "-") + '</div></td>' +
           '<td class="actions">' +
@@ -459,6 +475,7 @@ app.post("/api/admin/reset-device", (req, res) => {
   const { db, key } = result;
 
   db.licenses[key].deviceID = "";
+  db.licenses[key].deviceIDs = [];
   db.licenses[key].lastAction = "reset-device";
   db.licenses[key].lastCheckAt = nowSeconds();
 
@@ -605,6 +622,7 @@ app.post("/admin/reset-device", (req, res) => {
   }
 
   license.deviceID = "";
+  license.deviceIDs = [];
   saveDB(db);
 
   res.json({
