@@ -311,7 +311,6 @@ app.post("/api/admin/reset-device", async (req, res) => {
     const { license } = result;
     license.deviceID = "";
     license.deviceIDs = [];
-    license.blockedDeviceIDs = [];
     license.lastAction = "reset-device";
     license.lastCheckAt = nowSeconds();
 
@@ -319,6 +318,23 @@ app.post("/api/admin/reset-device", async (req, res) => {
     return res.json({ ok: true, message: "Đã reset tất cả máy đang dùng license", license });
   } catch (error) {
     return res.status(500).json({ ok: false, message: "Lỗi reset máy: " + error.message });
+  }
+});
+
+app.post("/api/admin/clear-blocked-devices", async (req, res) => {
+  try {
+    const result = await getAdminLicense(req, res);
+    if (!result) return;
+
+    const { license } = result;
+    license.blockedDeviceIDs = [];
+    license.lastAction = "clear-blocked-devices";
+    license.lastCheckAt = nowSeconds();
+
+    await saveLicense(license);
+    return res.json({ ok: true, message: "Đã mở chặn tất cả máy của license", license });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: "Lỗi mở chặn máy: " + error.message });
   }
 });
 
@@ -408,7 +424,6 @@ app.post("/admin/reset-device", async (req, res) => {
     const { license } = result;
     license.deviceID = "";
     license.deviceIDs = [];
-    license.blockedDeviceIDs = [];
     license.lastAction = "reset-device";
     license.lastCheckAt = nowSeconds();
 
@@ -416,6 +431,23 @@ app.post("/admin/reset-device", async (req, res) => {
     return res.json({ ok: true, message: "Đã reset tất cả máy đang dùng license", license });
   } catch (error) {
     return res.status(500).json({ ok: false, message: "Lỗi reset máy: " + error.message });
+  }
+});
+
+app.post("/admin/clear-blocked-devices", async (req, res) => {
+  try {
+    const result = await getAdminLicense(req, res);
+    if (!result) return;
+
+    const { license } = result;
+    license.blockedDeviceIDs = [];
+    license.lastAction = "clear-blocked-devices";
+    license.lastCheckAt = nowSeconds();
+
+    await saveLicense(license);
+    return res.json({ ok: true, message: "Đã mở chặn tất cả máy của license", license });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: "Lỗi mở chặn máy: " + error.message });
   }
 });
 
@@ -587,7 +619,7 @@ app.get("/admin", (req, res) => {
     function statusFor(item){ const now=Math.floor(Date.now()/1000); if(item.revoked)return '<span class="pill bad">Đã khóa</span>'; if(!item.expiresAt||item.expiresAt<now)return '<span class="pill warn">Hết hạn</span>'; return '<span class="pill ok">Hoạt động</span>'; }
     function remainingText(item){ const now=Math.floor(Date.now()/1000); const seconds=Math.max(0,(item.expiresAt||0)-now); const days=Math.ceil(seconds/86400); if(!seconds)return "Đã hết hạn"; return days>=1?"Còn khoảng "+days+" ngày":"Còn dưới 1 ngày"; }
     function escapeText(value){ return String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;"); }
-    function renderTable(){ const q=$("searchBox").value.trim().toLowerCase(); const filtered=licenses.filter(item=>JSON.stringify(item).toLowerCase().includes(q)); $("summaryText").textContent="Tổng "+licenses.length+" license, đang hiển thị "+filtered.length+"."; $("licenseRows").innerHTML=filtered.map(item=>{ const key=item.licenseKey||""; const revoked=!!item.revoked; const deviceIDs=Array.isArray(item.deviceIDs)?item.deviceIDs:(item.deviceID?[item.deviceID]:[]); const maxDevices=Number(item.maxDevices||1); return '<tr>'+'<td><b>'+escapeText(key)+'</b><div class="muted">created: '+escapeText(formatDate(item.createdAt))+'</div></td>'+'<td>'+statusFor(item)+'</td>'+'<td><div style="white-space:pre-line">'+escapeText(deviceIDs.length?deviceIDs.join("\\n"):"Chưa gắn máy")+'</div><div class="muted">blocked: '+escapeText((Array.isArray(item.blockedDeviceIDs)?item.blockedDeviceIDs.length:0))+'</div><div class="muted">app: '+escapeText(item.lastAppVersion||"-")+'</div></td>'+'<td><b>'+escapeText(deviceIDs.length+"/"+maxDevices)+'</b><div class="muted">đang dùng / tối đa</div></td>'+'<td><div>'+escapeText(remainingText(item))+'</div><div class="muted">'+escapeText(formatDate(item.expiresAt))+'</div></td>'+'<td><div>'+escapeText(formatDate(item.lastCheckAt))+'</div><div class="muted">action: '+escapeText(item.lastAction||"-")+'</div></td>'+'<td class="actions">'+'<button class="secondary" onclick="removeSelectedDevice(\\''+escapeText(key)+'\\', '+escapeText(JSON.stringify(deviceIDs))+')">Tháo 1 máy</button>'+'<button class="secondary" onclick="adminAction(\\'reset-device\\', \\''+escapeText(key)+'\\')">Reset tất cả máy</button>'+'<button class="'+(revoked?"green":"warning")+'" onclick="adminAction(\\''+(revoked?"unrevoke":"revoke")+'\\', \\''+escapeText(key)+'\\')">'+(revoked?"Mở khóa":"Khóa")+'</button>'+'<button class="danger" onclick="confirm(\\'Xóa license '+escapeText(key)+'?\\') && adminAction(\\'delete-license\\', \\''+escapeText(key)+'\\')">Xóa</button>'+'</td>'+'</tr>'; }).join(""); }
+    function renderTable(){ const q=$("searchBox").value.trim().toLowerCase(); const filtered=licenses.filter(item=>JSON.stringify(item).toLowerCase().includes(q)); $("summaryText").textContent="Tổng "+licenses.length+" license, đang hiển thị "+filtered.length+"."; $("licenseRows").innerHTML=filtered.map(item=>{ const key=item.licenseKey||""; const revoked=!!item.revoked; const deviceIDs=Array.isArray(item.deviceIDs)?item.deviceIDs:(item.deviceID?[item.deviceID]:[]); const maxDevices=Number(item.maxDevices||1); return '<tr>'+'<td><b>'+escapeText(key)+'</b><div class="muted">created: '+escapeText(formatDate(item.createdAt))+'</div></td>'+'<td>'+statusFor(item)+'</td>'+'<td><div style="white-space:pre-line">'+escapeText(deviceIDs.length?deviceIDs.join("\\n"):"Chưa gắn máy")+'</div><div class="muted">blocked: '+escapeText((Array.isArray(item.blockedDeviceIDs)?item.blockedDeviceIDs.length:0))+'</div><div class="muted">app: '+escapeText(item.lastAppVersion||"-")+'</div></td>'+'<td><b>'+escapeText(deviceIDs.length+"/"+maxDevices)+'</b><div class="muted">đang dùng / tối đa</div></td>'+'<td><div>'+escapeText(remainingText(item))+'</div><div class="muted">'+escapeText(formatDate(item.expiresAt))+'</div></td>'+'<td><div>'+escapeText(formatDate(item.lastCheckAt))+'</div><div class="muted">action: '+escapeText(item.lastAction||"-")+'</div></td>'+'<td class="actions">'+'<button class="secondary" onclick="removeSelectedDevice(\\''+escapeText(key)+'\\', '+escapeText(JSON.stringify(deviceIDs))+')">Tháo 1 máy</button>'+'<button class="secondary" onclick="adminAction(\\'reset-device\\', \\''+escapeText(key)+'\\')">Reset tất cả máy</button>'+'<button class="secondary" onclick="adminAction(\\'clear-blocked-devices\\', \\''+escapeText(key)+'\\')">Mở chặn tất cả</button>'+'<button class="'+(revoked?"green":"warning")+'" onclick="adminAction(\\''+(revoked?"unrevoke":"revoke")+'\\', \\''+escapeText(key)+'\\')">'+(revoked?"Mở khóa":"Khóa")+'</button>'+'<button class="danger" onclick="confirm(\\'Xóa license '+escapeText(key)+'?\\') && adminAction(\\'delete-license\\', \\''+escapeText(key)+'\\')">Xóa</button>'+'</td>'+'</tr>'; }).join(""); }
     restoreToken();
     $("createBtn").addEventListener("click", createLicense);
     $("randomBtn").addEventListener("click", makeRandomKey);
