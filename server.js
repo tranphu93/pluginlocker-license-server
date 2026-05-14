@@ -99,7 +99,7 @@ app.post("/api/license", (req, res) => {
   });
 });
 
-app.post("/admin/create", (req, res) => {
+function createLicenseHandler(req, res) {
   const { adminToken, licenseKey, days } = req.body;
 
   if (adminToken !== ADMIN_TOKEN) {
@@ -130,13 +130,17 @@ app.post("/admin/create", (req, res) => {
 
   saveDB(db);
 
-  res.json({
+  return res.json({
     ok: true,
+    valid: true,
     licenseKey: key,
     expiresAt: db.licenses[key].expiresAt,
     message: `Đã tạo license ${days} ngày`
   });
-});
+}
+
+app.post("/admin/create", createLicenseHandler);
+app.post("/api/admin/create-license", createLicenseHandler);
 
 app.post("/admin/extend", (req, res) => {
   const { adminToken, licenseKey, days } = req.body;
