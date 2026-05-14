@@ -14,7 +14,6 @@ function loadDB() {
   if (!fs.existsSync(DB_FILE)) {
     fs.writeFileSync(DB_FILE, JSON.stringify({ licenses: {} }, null, 2));
   }
-
   return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
 }
 
@@ -24,6 +23,30 @@ function saveDB(db) {
 
 function nowSeconds() {
   return Math.floor(Date.now() / 1000);
+}
+
+function normalizeLicense(license) {
+  if (!license) return license;
+
+  if (!Array.isArray(license.deviceIDs)) {
+    license.deviceIDs = license.deviceID ? [license.deviceID] : [];
+  }
+
+  if (!license.deviceID && license.deviceIDs.length > 0) {
+    license.deviceID = license.deviceIDs[0];
+  }
+
+  if (!license.maxDevices || Number(license.maxDevices) < 1) {
+    license.maxDevices = 1;
+  }
+
+  return license;
+}
+
+function safeNumber(value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return n;
 }
 
 app.get("/", (req, res) => {
@@ -47,7 +70,7 @@ app.post("/api/license", (req, res) => {
 
   const db = loadDB();
   const key = String(licenseKey).toUpperCase();
-  const license = db.licenses[key];
+  const license = normalizeLicense(db.licenses[key]);
 
   if (!license) {
     return res.json({
@@ -75,18 +98,23 @@ app.post("/api/license", (req, res) => {
     });
   }
 
-  if (!license.deviceID) {
-    license.deviceID = deviceID;
+  const maxDevices = Math.max(1, Number(license.maxDevices || 1));
+  const alreadyActivated = license.deviceIDs.includes(deviceID);
+
+  if (!alreadyActivated) {
+    if (license.deviceIDs.length >= maxDevices) {
+      return res.json({
+        valid: false,
+        expiresAt: 0,
+        message: `Giấy phép này đã đủ ${maxDevices} máy sử dụng`
+      });
+    }
+
+    license.deviceIDs.push(deviceID);
   }
 
-  if (license.deviceID !== deviceID) {
-    return res.json({
-      valid: false,
-      expiresAt: 0,
-      message: "Giấy phép này đang được dùng trên máy khác"
-    });
-  }
-
+  license.deviceID = license.deviceIDs[0] || deviceID;
+  license.maxDevices = maxDevices;
   license.lastCheckAt = now;
   license.lastAction = action || "check";
   license.lastAppVersion = appVersion || "";
@@ -95,12 +123,15 @@ app.post("/api/license", (req, res) => {
   return res.json({
     valid: true,
     expiresAt: license.expiresAt,
+    maxDevices: license.maxDevices,
+    usedDevices: license.deviceIDs.length,
+    deviceIDs: license.deviceIDs,
     message: "Giấy phép đang hoạt động"
   });
 });
 
 function createLicenseHandler(req, res) {
-  const { adminToken, licenseKey, days } = req.body;
+  const { adminToken, licenseKey, days, maxDevices } = req.body;
 
   if (adminToken !== ADMIN_TOKEN) {
     return res.status(403).json({ ok: false, message: "Sai admin token" });
@@ -116,16 +147,21 @@ function createLicenseHandler(req, res) {
   const db = loadDB();
   const key = String(licenseKey).toUpperCase();
   const now = nowSeconds();
+  const oldLicense = normalizeLicense(db.licenses[key]);
+  const deviceIDs = oldLicense ? oldLicense.deviceIDs : [];
+  const max = Math.max(1, Math.floor(safeNumber(maxDevices, oldLicense?.maxDevices || 1)));
 
   db.licenses[key] = {
     licenseKey: key,
     expiresAt: now + Number(days) * 24 * 60 * 60,
     revoked: false,
-    deviceID: "",
-    createdAt: now,
-    lastCheckAt: 0,
-    lastAction: "",
-    lastAppVersion: ""
+    deviceID: deviceIDs[0] || "",
+    deviceIDs,
+    maxDevices: max,
+    createdAt: oldLicense?.createdAt || now,
+    lastCheckAt: oldLicense?.lastCheckAt || 0,
+    lastAction: oldLicense ? "extend" : "create",
+    lastAppVersion: oldLicense?.lastAppVersion || ""
   };
 
   saveDB(db);
@@ -135,7 +171,9 @@ function createLicenseHandler(req, res) {
     valid: true,
     licenseKey: key,
     expiresAt: db.licenses[key].expiresAt,
-    message: `Đã tạo license ${days} ngày`
+    maxDevices: db.licenses[key].maxDevices,
+    deviceIDs: db.licenses[key].deviceIDs,
+    message: `Đã tạo/gia hạn license ${days} ngày, tối đa ${max} máy`
   });
 }
 
@@ -155,8 +193,8 @@ app.get("/admin", (req, res) => {
     body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f1115; color: #f5f5f5; }
     header { padding: 22px 28px; border-bottom: 1px solid #282c35; background: #151820; position: sticky; top: 0; z-index: 10; }
     h1 { margin: 0; font-size: 24px; }
-    main { padding: 24px 28px 40px; max-width: 1500px; margin: 0 auto; }
-    .grid { display: grid; grid-template-columns: 360px minmax(900px, 1fr); gap: 18px; align-items: start; }
+    main { padding: 24px 28px 40px; max-width: 1600px; margin: 0 auto; }
+    .grid { display: grid; grid-template-columns: 380px minmax(1000px, 1fr); gap: 18px; align-items: start; }
     .card { background: #171a22; border: 1px solid #2a2f3a; border-radius: 14px; padding: 16px; box-shadow: 0 10px 28px rgba(0,0,0,.25); }
     label { display: block; font-size: 12px; color: #a8b0c0; margin: 10px 0 6px; }
     input, button { font: inherit; }
@@ -171,7 +209,7 @@ app.get("/admin", (req, res) => {
     .row > * { flex: 1; }
     .toolbar { display: flex; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
     .toolbar input { max-width: 360px; }
-    table { width: 100%; min-width: 1050px; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+    table { width: 100%; min-width: 1180px; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
     th, td { padding: 14px 10px; border-bottom: 1px solid #292f3a; text-align: left; vertical-align: top; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
     th { color: #a8b0c0; background: #11141b; position: static; z-index: auto; }
     tr:hover td { background: #1c2130; }
@@ -180,7 +218,9 @@ app.get("/admin", (req, res) => {
     .bad { background: rgba(220,38,38,.18); color: #f87171; }
     .warn { background: rgba(217,119,6,.18); color: #fbbf24; }
     .muted { color: #8b94a7; font-size: 12px; }
-    .actions { display: flex; gap: 8px; flex-wrap: wrap; min-width: 230px; }
+    .device-list { max-height: 110px; overflow: auto; }
+    .device-line { padding: 2px 0; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; min-width: 320px; }
     pre { white-space: pre-wrap; word-break: break-word; background: #0f1117; border: 1px solid #2a2f3a; border-radius: 10px; padding: 10px; min-height: 40px; max-height: 260px; overflow: auto; color: #cbd5e1; }
     @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } th { position: static; } }
   </style>
@@ -188,7 +228,7 @@ app.get("/admin", (req, res) => {
 <body>
   <header>
     <h1>PluginLocker License Admin</h1>
-    <div class="muted">Quản lý giấy phép, máy kích hoạt, thời hạn và trạng thái khóa.</div>
+    <div class="muted">Quản lý giấy phép, máy kích hoạt, thời hạn, số máy tối đa và trạng thái khóa.</div>
   </header>
 
   <main>
@@ -202,8 +242,16 @@ app.get("/admin", (req, res) => {
         <label>License key</label>
         <input id="licenseKey" placeholder="PL-USER-30DAYS-001" />
 
-        <label>Số ngày</label>
-        <input id="days" type="number" min="1" value="30" />
+        <div class="row">
+          <div>
+            <label>Số ngày</label>
+            <input id="days" type="number" min="1" value="30" />
+          </div>
+          <div>
+            <label>Số máy tối đa</label>
+            <input id="maxDevices" type="number" min="1" value="2" />
+          </div>
+        </div>
 
         <div class="row" style="margin-top:12px">
           <button onclick="createLicense()">Tạo / Gia hạn</button>
@@ -233,10 +281,11 @@ app.get("/admin", (req, res) => {
               <tr>
                 <th style="width:200px">License</th>
                 <th style="width:110px">Trạng thái</th>
-                <th style="width:240px">Máy đang dùng</th>
+                <th style="width:280px">Máy đang dùng</th>
+                <th style="width:120px">Số máy</th>
                 <th style="width:160px">Thời hạn</th>
                 <th style="width:170px">Lần cuối</th>
-                <th style="width:250px">Thao tác</th>
+                <th style="width:320px">Thao tác</th>
               </tr>
             </thead>
             <tbody id="licenseRows"></tbody>
@@ -302,7 +351,8 @@ app.get("/admin", (req, res) => {
         const payload = {
           adminToken: getToken(),
           licenseKey: $("licenseKey").value.trim().toUpperCase(),
-          days: Number($("days").value || 30)
+          days: Number($("days").value || 30),
+          maxDevices: Number($("maxDevices").value || 1)
         };
 
         const data = await api("/api/admin/create-license", payload);
@@ -336,6 +386,47 @@ app.get("/admin", (req, res) => {
         const data = await api("/api/admin/" + action, {
           adminToken: getToken(),
           licenseKey
+        });
+
+        showResult(data);
+        await loadLicenses();
+      } catch (e) {
+        showResult(e);
+      }
+    }
+
+    async function removeSelectedDevice(licenseKey, deviceIDs) {
+      if (!Array.isArray(deviceIDs) || deviceIDs.length === 0) {
+        showResult({ ok: false, message: "License này chưa có máy để tháo." });
+        return;
+      }
+
+      const listText = deviceIDs.map((id, index) => (index + 1) + ". " + id).join("\n");
+      const input = prompt(
+        "Chọn số máy muốn tháo khỏi license:\n\n" + listText + "\n\nNhập số thứ tự, ví dụ: 1",
+        "1"
+      );
+
+      if (input === null) return;
+
+      const index = Number(input.trim()) - 1;
+
+      if (!Number.isInteger(index) || index < 0 || index >= deviceIDs.length) {
+        showResult({ ok: false, message: "Số thứ tự máy không hợp lệ." });
+        return;
+      }
+
+      const deviceID = deviceIDs[index];
+
+      if (!confirm("Tháo máy này khỏi license?\n\n" + deviceID)) {
+        return;
+      }
+
+      try {
+        const data = await api("/api/admin/remove-device", {
+          adminToken: getToken(),
+          licenseKey,
+          deviceID
         });
 
         showResult(data);
@@ -382,6 +473,18 @@ app.get("/admin", (req, res) => {
         .replaceAll("'", "&#039;");
     }
 
+    function deviceListHTML(item) {
+      const ids = Array.isArray(item.deviceIDs) ? item.deviceIDs : (item.deviceID ? [item.deviceID] : []);
+
+      if (ids.length === 0) {
+        return '<div>Chưa gắn máy</div>';
+      }
+
+      return '<div class="device-list">' + ids.map((id, index) =>
+        '<div class="device-line">' + (index + 1) + '. ' + escapeText(id) + '</div>'
+      ).join("") + '</div>';
+    }
+
     function renderTable() {
       const q = $("searchBox").value.trim().toLowerCase();
       const filtered = licenses.filter(item => JSON.stringify(item).toLowerCase().includes(q));
@@ -391,15 +494,19 @@ app.get("/admin", (req, res) => {
       $("licenseRows").innerHTML = filtered.map(item => {
         const key = item.licenseKey || "";
         const revoked = !!item.revoked;
+        const deviceIDs = Array.isArray(item.deviceIDs) ? item.deviceIDs : (item.deviceID ? [item.deviceID] : []);
+        const maxDevices = Number(item.maxDevices || 1);
 
         return '<tr>' +
           '<td><b>' + escapeText(key) + '</b><div class="muted">created: ' + escapeText(formatDate(item.createdAt)) + '</div></td>' +
           '<td>' + statusFor(item) + '</td>' +
-          '<td><div>' + escapeText(item.deviceID || "Chưa gắn máy") + '</div><div class="muted">app: ' + escapeText(item.lastAppVersion || "-") + '</div></td>' +
+          '<td>' + deviceListHTML(item) + '<div class="muted">app: ' + escapeText(item.lastAppVersion || "-") + '</div></td>' +
+          '<td><b>' + escapeText(deviceIDs.length + "/" + maxDevices) + '</b><div class="muted">đang dùng / tối đa</div></td>' +
           '<td><div>' + escapeText(remainingText(item)) + '</div><div class="muted">' + escapeText(formatDate(item.expiresAt)) + '</div></td>' +
           '<td><div>' + escapeText(formatDate(item.lastCheckAt)) + '</div><div class="muted">action: ' + escapeText(item.lastAction || "-") + '</div></td>' +
           '<td class="actions">' +
-            '<button class="secondary" onclick="adminAction(\\'reset-device\\', \\'' + escapeText(key) + '\\')">Reset máy</button>' +
+            '<button class="secondary" onclick="removeSelectedDevice(\\'' + escapeText(key) + '\\', ' + escapeText(JSON.stringify(deviceIDs)) + ')">Tháo 1 máy</button>' +
+            '<button class="secondary" onclick="adminAction(\\'reset-device\\', \\'' + escapeText(key) + '\\')">Reset tất cả máy</button>' +
             '<button class="' + (revoked ? "green" : "warning") + '" onclick="adminAction(\\'' + (revoked ? "unrevoke" : "revoke") + '\\', \\'' + escapeText(key) + '\\')">' + (revoked ? "Mở khóa" : "Khóa") + '</button>' +
             '<button class="danger" onclick="confirm(\\'Xóa license ' + escapeText(key) + '?\\') && adminAction(\\'delete-license\\', \\'' + escapeText(key) + '\\')">Xóa</button>' +
           '</td>' +
@@ -421,9 +528,11 @@ app.get("/api/admin/licenses", (req, res) => {
   }
 
   const db = loadDB();
-  const licenses = Object.values(db.licenses || {}).sort((a, b) =>
-    String(a.licenseKey).localeCompare(String(b.licenseKey))
-  );
+  const licenses = Object.values(db.licenses || {})
+    .map(normalizeLicense)
+    .sort((a, b) => String(a.licenseKey).localeCompare(String(b.licenseKey)));
+
+  saveDB(db);
 
   return res.json({ ok: true, licenses });
 });
@@ -449,6 +558,7 @@ function requireAdminToken(req, res) {
     return null;
   }
 
+  normalizeLicense(db.licenses[key]);
   return { db, key };
 }
 
@@ -459,6 +569,7 @@ app.post("/api/admin/reset-device", (req, res) => {
   const { db, key } = result;
 
   db.licenses[key].deviceID = "";
+  db.licenses[key].deviceIDs = [];
   db.licenses[key].lastAction = "reset-device";
   db.licenses[key].lastCheckAt = nowSeconds();
 
@@ -466,8 +577,45 @@ app.post("/api/admin/reset-device", (req, res) => {
 
   return res.json({
     ok: true,
-    message: "Đã reset máy đang dùng license",
+    message: "Đã reset tất cả máy đang dùng license",
     license: db.licenses[key]
+  });
+});
+
+app.post("/api/admin/remove-device", (req, res) => {
+  const result = requireAdminToken(req, res);
+  if (!result) return;
+
+  const { deviceID } = req.body;
+
+  if (!deviceID) {
+    return res.status(400).json({ ok: false, message: "Thiếu deviceID" });
+  }
+
+  const { db, key } = result;
+  const license = db.licenses[key];
+
+  const beforeCount = license.deviceIDs.length;
+  license.deviceIDs = license.deviceIDs.filter(id => id !== deviceID);
+
+  if (license.deviceIDs.length === beforeCount) {
+    return res.status(404).json({
+      ok: false,
+      message: "Không tìm thấy máy này trong license"
+    });
+  }
+
+  license.deviceID = license.deviceIDs[0] || "";
+  license.lastAction = "remove-device";
+  license.lastCheckAt = nowSeconds();
+
+  saveDB(db);
+
+  return res.json({
+    ok: true,
+    message: "Đã tháo 1 máy khỏi license",
+    removedDeviceID: deviceID,
+    license
   });
 });
 
@@ -525,38 +673,7 @@ app.post("/api/admin/delete-license", (req, res) => {
   });
 });
 
-app.post("/admin/extend", (req, res) => {
-  const { adminToken, licenseKey, days } = req.body;
-
-  if (adminToken !== ADMIN_TOKEN) {
-    return res.status(403).json({ ok: false, message: "Sai admin token" });
-  }
-
-  const db = loadDB();
-  const key = String(licenseKey).toUpperCase();
-  const license = db.licenses[key];
-
-  if (!license) {
-    return res.status(404).json({
-      ok: false,
-      message: "Không tìm thấy license"
-    });
-  }
-
-  const now = nowSeconds();
-  const baseTime = Math.max(now, license.expiresAt);
-
-  license.expiresAt = baseTime + Number(days) * 24 * 60 * 60;
-  license.revoked = false;
-  saveDB(db);
-
-  res.json({
-    ok: true,
-    licenseKey: key,
-    expiresAt: license.expiresAt,
-    message: `Đã gia hạn thêm ${days} ngày`
-  });
-});
+app.post("/admin/extend", createLicenseHandler);
 
 app.post("/admin/revoke", (req, res) => {
   const { adminToken, licenseKey } = req.body;
@@ -604,13 +721,58 @@ app.post("/admin/reset-device", (req, res) => {
     });
   }
 
+  normalizeLicense(license);
   license.deviceID = "";
+  license.deviceIDs = [];
   saveDB(db);
 
   res.json({
     ok: true,
     licenseKey: key,
-    message: "Đã reset máy đang dùng license"
+    message: "Đã reset tất cả máy đang dùng license"
+  });
+});
+
+app.post("/admin/remove-device", (req, res) => {
+  const { adminToken, licenseKey, deviceID } = req.body;
+
+  if (adminToken !== ADMIN_TOKEN) {
+    return res.status(403).json({ ok: false, message: "Sai admin token" });
+  }
+
+  if (!deviceID) {
+    return res.status(400).json({ ok: false, message: "Thiếu deviceID" });
+  }
+
+  const db = loadDB();
+  const key = String(licenseKey).toUpperCase();
+  const license = normalizeLicense(db.licenses[key]);
+
+  if (!license) {
+    return res.status(404).json({
+      ok: false,
+      message: "Không tìm thấy license"
+    });
+  }
+
+  const beforeCount = license.deviceIDs.length;
+  license.deviceIDs = license.deviceIDs.filter(id => id !== deviceID);
+
+  if (license.deviceIDs.length === beforeCount) {
+    return res.status(404).json({
+      ok: false,
+      message: "Không tìm thấy máy này trong license"
+    });
+  }
+
+  license.deviceID = license.deviceIDs[0] || "";
+  saveDB(db);
+
+  res.json({
+    ok: true,
+    licenseKey: key,
+    removedDeviceID: deviceID,
+    message: "Đã tháo 1 máy khỏi license"
   });
 });
 
@@ -622,6 +784,8 @@ app.post("/admin/list", (req, res) => {
   }
 
   const db = loadDB();
+  Object.values(db.licenses || {}).forEach(normalizeLicense);
+  saveDB(db);
 
   res.json({
     ok: true,
