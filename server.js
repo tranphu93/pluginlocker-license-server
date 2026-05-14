@@ -112,11 +112,15 @@ async function deleteLicense(key) {
 }
 
 function checkAdminToken(req, res) {
-  const adminToken = req.body.adminToken || req.query.adminToken;
+  const body = req.body || {};
+  const query = req.query || {};
+  const adminToken = body.adminToken || query.adminToken;
+
   if (adminToken !== ADMIN_TOKEN) {
     res.status(403).json({ ok: false, message: "Sai admin token" });
     return false;
   }
+
   return true;
 }
 
@@ -364,28 +368,96 @@ app.post("/api/admin/delete-license", async (req, res) => {
 });
 
 app.post("/admin/reset-device", async (req, res) => {
-  req.url = "/api/admin/reset-device";
-  return app._router.handle(req, res);
+  try {
+    const result = await getAdminLicense(req, res);
+    if (!result) return;
+
+    const { license } = result;
+    license.deviceID = "";
+    license.deviceIDs = [];
+    license.lastAction = "reset-device";
+    license.lastCheckAt = nowSeconds();
+
+    await saveLicense(license);
+    return res.json({ ok: true, message: "Đã reset tất cả máy đang dùng license", license });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: "Lỗi reset máy: " + error.message });
+  }
 });
 
 app.post("/admin/remove-device", async (req, res) => {
-  req.url = "/api/admin/remove-device";
-  return app._router.handle(req, res);
+  try {
+    const result = await getAdminLicense(req, res);
+    if (!result) return;
+
+    const { deviceID } = req.body || {};
+    if (!deviceID) {
+      return res.status(400).json({ ok: false, message: "Thiếu deviceID" });
+    }
+
+    const { license } = result;
+    const beforeCount = license.deviceIDs.length;
+    license.deviceIDs = license.deviceIDs.filter(id => id !== deviceID);
+
+    if (license.deviceIDs.length === beforeCount) {
+      return res.status(404).json({ ok: false, message: "Không tìm thấy máy này trong license" });
+    }
+
+    license.deviceID = license.deviceIDs[0] || "";
+    license.lastAction = "remove-device";
+    license.lastCheckAt = nowSeconds();
+
+    await saveLicense(license);
+    return res.json({ ok: true, message: "Đã tháo 1 máy khỏi license", removedDeviceID: deviceID, license });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: "Lỗi tháo máy: " + error.message });
+  }
 });
 
 app.post("/admin/revoke", async (req, res) => {
-  req.url = "/api/admin/revoke";
-  return app._router.handle(req, res);
+  try {
+    const result = await getAdminLicense(req, res);
+    if (!result) return;
+
+    const { license } = result;
+    license.revoked = true;
+    license.lastAction = "revoke";
+    license.lastCheckAt = nowSeconds();
+
+    await saveLicense(license);
+    return res.json({ ok: true, message: "Đã khóa license", license });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: "Lỗi khóa license: " + error.message });
+  }
 });
 
 app.post("/admin/unrevoke", async (req, res) => {
-  req.url = "/api/admin/unrevoke";
-  return app._router.handle(req, res);
+  try {
+    const result = await getAdminLicense(req, res);
+    if (!result) return;
+
+    const { license } = result;
+    license.revoked = false;
+    license.lastAction = "unrevoke";
+    license.lastCheckAt = nowSeconds();
+
+    await saveLicense(license);
+    return res.json({ ok: true, message: "Đã mở khóa license", license });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: "Lỗi mở khóa license: " + error.message });
+  }
 });
 
 app.post("/admin/delete-license", async (req, res) => {
-  req.url = "/api/admin/delete-license";
-  return app._router.handle(req, res);
+  try {
+    const result = await getAdminLicense(req, res);
+    if (!result) return;
+
+    await deleteLicense(result.key);
+    return res.json({ ok: true, message: "Đã xóa license", licenseKey: result.key });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: "Lỗi xóa license: " + error.message });
+  }
 });
 
 app.post("/admin/list", async (req, res) => {
