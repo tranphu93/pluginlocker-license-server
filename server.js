@@ -36,12 +36,18 @@ function normalizeLicense(row) {
     deviceIDs = row.device_id ? [row.device_id] : [];
   }
 
+  let blockedDeviceIDs = row.blocked_device_ids;
+  if (!Array.isArray(blockedDeviceIDs)) {
+    blockedDeviceIDs = [];
+  }
+
   return {
     licenseKey: row.license_key,
     expiresAt: Number(row.expires_at || 0),
     revoked: !!row.revoked,
     deviceID: row.device_id || "",
     deviceIDs,
+    blockedDeviceIDs,
     maxDevices: Math.max(1, Number(row.max_devices || 1)),
     createdAt: Number(row.created_at || 0),
     lastCheckAt: Number(row.last_check_at || 0),
@@ -58,12 +64,18 @@ async function ensureSchema() {
       revoked boolean not null default false,
       device_id text not null default '',
       device_ids jsonb not null default '[]'::jsonb,
+      blocked_device_ids jsonb not null default '[]'::jsonb,
       max_devices integer not null default 1,
       created_at bigint not null,
       last_check_at bigint not null default 0,
       last_action text not null default '',
       last_app_version text not null default ''
     )
+  `);
+
+  await pool.query(`
+    alter table licenses
+    add column if not exists blocked_device_ids jsonb not null default '[]'::jsonb
   `);
 }
 
@@ -80,14 +92,15 @@ async function listLicenses() {
 async function saveLicense(license) {
   await pool.query(
     `insert into licenses (
-      license_key, expires_at, revoked, device_id, device_ids,
+      license_key, expires_at, revoked, device_id, device_ids, blocked_device_ids,
       max_devices, created_at, last_check_at, last_action, last_app_version
-    ) values ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10)
+    ) values ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9,$10,$11)
     on conflict (license_key) do update set
       expires_at = excluded.expires_at,
       revoked = excluded.revoked,
       device_id = excluded.device_id,
       device_ids = excluded.device_ids,
+      blocked_device_ids = excluded.blocked_device_ids,
       max_devices = excluded.max_devices,
       last_check_at = excluded.last_check_at,
       last_action = excluded.last_action,
@@ -98,6 +111,7 @@ async function saveLicense(license) {
       !!license.revoked,
       license.deviceID || "",
       JSON.stringify(Array.isArray(license.deviceIDs) ? license.deviceIDs : []),
+      JSON.stringify(Array.isArray(license.blockedDeviceIDs) ? license.blockedDeviceIDs : []),
       Math.max(1, Number(license.maxDevices || 1)),
       Number(license.createdAt || nowSeconds()),
       Number(license.lastCheckAt || 0),
@@ -183,6 +197,14 @@ app.post("/api/license", async (req, res) => {
       return res.json({ valid: false, expiresAt: license.expiresAt, message: "Giấy phép đã hết hạn" });
     }
 
+    if (Array.isArray(license.blockedDeviceIDs) && license.blockedDeviceIDs.includes(deviceID)) {
+      return res.json({
+        valid: false,
+        expiresAt: 0,
+        message: "Máy này đã bị admin tháo/chặn khỏi license"
+      });
+    }
+
     if (!license.deviceIDs.includes(deviceID)) {
       if (license.deviceIDs.length >= license.maxDevices) {
         return res.json({
@@ -234,6 +256,7 @@ async function createLicenseHandler(req, res) {
     const now = nowSeconds();
     const oldLicense = await getLicense(key);
     const oldDeviceIDs = oldLicense ? oldLicense.deviceIDs : [];
+    const oldBlockedDeviceIDs = oldLicense ? oldLicense.blockedDeviceIDs : [];
     const max = Math.max(1, Math.floor(Number(maxDevices || oldLicense?.maxDevices || 1)));
 
     const license = {
@@ -242,6 +265,7 @@ async function createLicenseHandler(req, res) {
       revoked: false,
       deviceID: oldDeviceIDs[0] || "",
       deviceIDs: oldDeviceIDs,
+      blockedDeviceIDs: oldBlockedDeviceIDs,
       maxDevices: max,
       createdAt: oldLicense?.createdAt || now,
       lastCheckAt: oldLicense?.lastCheckAt || 0,
@@ -287,6 +311,7 @@ app.post("/api/admin/reset-device", async (req, res) => {
     const { license } = result;
     license.deviceID = "";
     license.deviceIDs = [];
+    license.blockedDeviceIDs = [];
     license.lastAction = "reset-device";
     license.lastCheckAt = nowSeconds();
 
@@ -310,6 +335,14 @@ app.post("/api/admin/remove-device", async (req, res) => {
     const { license } = result;
     const beforeCount = license.deviceIDs.length;
     license.deviceIDs = license.deviceIDs.filter(id => id !== deviceID);
+
+    if (!Array.isArray(license.blockedDeviceIDs)) {
+      license.blockedDeviceIDs = [];
+    }
+
+    if (!license.blockedDeviceIDs.includes(deviceID)) {
+      license.blockedDeviceIDs.push(deviceID);
+    }
 
     if (license.deviceIDs.length === beforeCount) {
       return res.status(404).json({ ok: false, message: "Không tìm thấy máy này trong license" });
@@ -375,6 +408,7 @@ app.post("/admin/reset-device", async (req, res) => {
     const { license } = result;
     license.deviceID = "";
     license.deviceIDs = [];
+    license.blockedDeviceIDs = [];
     license.lastAction = "reset-device";
     license.lastCheckAt = nowSeconds();
 
@@ -398,6 +432,14 @@ app.post("/admin/remove-device", async (req, res) => {
     const { license } = result;
     const beforeCount = license.deviceIDs.length;
     license.deviceIDs = license.deviceIDs.filter(id => id !== deviceID);
+
+    if (!Array.isArray(license.blockedDeviceIDs)) {
+      license.blockedDeviceIDs = [];
+    }
+
+    if (!license.blockedDeviceIDs.includes(deviceID)) {
+      license.blockedDeviceIDs.push(deviceID);
+    }
 
     if (license.deviceIDs.length === beforeCount) {
       return res.status(404).json({ ok: false, message: "Không tìm thấy máy này trong license" });
@@ -540,12 +582,12 @@ app.get("/admin", (req, res) => {
     async function createLicense(){ try{ const data = await api("/api/admin/create-license",{adminToken:getToken(),licenseKey:$("licenseKey").value.trim().toUpperCase(),days:Number($("days").value||30),maxDevices:Number($("maxDevices").value||1)}); showResult(data); await loadLicenses(); }catch(e){ showResult(e); } }
     async function loadLicenses(){ try{ const res = await fetch("/api/admin/licenses?adminToken=" + encodeURIComponent(getToken())); const data = await res.json(); if(!res.ok) throw data; licenses = data.licenses || []; showResult(data); renderTable(); }catch(e){ showResult(e); } }
     async function adminAction(action,licenseKey){ try{ const data = await api("/api/admin/" + action,{adminToken:getToken(),licenseKey}); showResult(data); await loadLicenses(); }catch(e){ showResult(e); } }
-    async function removeSelectedDevice(licenseKey,deviceIDs){ if(!Array.isArray(deviceIDs)||deviceIDs.length===0){showResult({ok:false,message:"License này chưa có máy để tháo."});return;} const listText=deviceIDs.map((id,i)=>(i+1)+". "+id).join("\\n"); const input=prompt("Chọn số máy muốn tháo khỏi license:\\n\\n"+listText+"\\n\\nNhập số thứ tự, ví dụ: 1","1"); if(input===null)return; const index=Number(input.trim())-1; if(!Number.isInteger(index)||index<0||index>=deviceIDs.length){showResult({ok:false,message:"Số thứ tự máy không hợp lệ."});return;} const deviceID=deviceIDs[index]; if(!confirm("Tháo máy này khỏi license?\\n\\n"+deviceID))return; try{ const data=await api("/api/admin/remove-device",{adminToken:getToken(),licenseKey,deviceID}); showResult(data); await loadLicenses(); }catch(e){showResult(e);} }
+    async function removeSelectedDevice(licenseKey,deviceIDs){ if(!Array.isArray(deviceIDs)||deviceIDs.length===0){showResult({ok:false,message:"License này chưa có máy để tháo."});return;} const listText=deviceIDs.map((id,i)=>(i+1)+". "+id).join("\\n"); const input=prompt("Chọn số máy muốn tháo khỏi license:\\n\\n"+listText+"\\n\\nNhập số thứ tự, ví dụ: 1","1"); if(input===null)return; const index=Number(input.trim())-1; if(!Number.isInteger(index)||index<0||index>=deviceIDs.length){showResult({ok:false,message:"Số thứ tự máy không hợp lệ."});return;} const deviceID=deviceIDs[index]; if(!confirm("Tháo và chặn máy này khỏi license?\\nMáy này sẽ không tự kích hoạt lại được nữa.\\n\\n"+deviceID))return; try{ const data=await api("/api/admin/remove-device",{adminToken:getToken(),licenseKey,deviceID}); showResult(data); await loadLicenses(); }catch(e){showResult(e);} }
     function formatDate(seconds){ if(!seconds)return "-"; return new Date(seconds*1000).toLocaleString(); }
     function statusFor(item){ const now=Math.floor(Date.now()/1000); if(item.revoked)return '<span class="pill bad">Đã khóa</span>'; if(!item.expiresAt||item.expiresAt<now)return '<span class="pill warn">Hết hạn</span>'; return '<span class="pill ok">Hoạt động</span>'; }
     function remainingText(item){ const now=Math.floor(Date.now()/1000); const seconds=Math.max(0,(item.expiresAt||0)-now); const days=Math.ceil(seconds/86400); if(!seconds)return "Đã hết hạn"; return days>=1?"Còn khoảng "+days+" ngày":"Còn dưới 1 ngày"; }
     function escapeText(value){ return String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;"); }
-    function renderTable(){ const q=$("searchBox").value.trim().toLowerCase(); const filtered=licenses.filter(item=>JSON.stringify(item).toLowerCase().includes(q)); $("summaryText").textContent="Tổng "+licenses.length+" license, đang hiển thị "+filtered.length+"."; $("licenseRows").innerHTML=filtered.map(item=>{ const key=item.licenseKey||""; const revoked=!!item.revoked; const deviceIDs=Array.isArray(item.deviceIDs)?item.deviceIDs:(item.deviceID?[item.deviceID]:[]); const maxDevices=Number(item.maxDevices||1); return '<tr>'+'<td><b>'+escapeText(key)+'</b><div class="muted">created: '+escapeText(formatDate(item.createdAt))+'</div></td>'+'<td>'+statusFor(item)+'</td>'+'<td><div style="white-space:pre-line">'+escapeText(deviceIDs.length?deviceIDs.join("\\n"):"Chưa gắn máy")+'</div><div class="muted">app: '+escapeText(item.lastAppVersion||"-")+'</div></td>'+'<td><b>'+escapeText(deviceIDs.length+"/"+maxDevices)+'</b><div class="muted">đang dùng / tối đa</div></td>'+'<td><div>'+escapeText(remainingText(item))+'</div><div class="muted">'+escapeText(formatDate(item.expiresAt))+'</div></td>'+'<td><div>'+escapeText(formatDate(item.lastCheckAt))+'</div><div class="muted">action: '+escapeText(item.lastAction||"-")+'</div></td>'+'<td class="actions">'+'<button class="secondary" onclick="removeSelectedDevice(\\''+escapeText(key)+'\\', '+escapeText(JSON.stringify(deviceIDs))+')">Tháo 1 máy</button>'+'<button class="secondary" onclick="adminAction(\\'reset-device\\', \\''+escapeText(key)+'\\')">Reset tất cả máy</button>'+'<button class="'+(revoked?"green":"warning")+'" onclick="adminAction(\\''+(revoked?"unrevoke":"revoke")+'\\', \\''+escapeText(key)+'\\')">'+(revoked?"Mở khóa":"Khóa")+'</button>'+'<button class="danger" onclick="confirm(\\'Xóa license '+escapeText(key)+'?\\') && adminAction(\\'delete-license\\', \\''+escapeText(key)+'\\')">Xóa</button>'+'</td>'+'</tr>'; }).join(""); }
+    function renderTable(){ const q=$("searchBox").value.trim().toLowerCase(); const filtered=licenses.filter(item=>JSON.stringify(item).toLowerCase().includes(q)); $("summaryText").textContent="Tổng "+licenses.length+" license, đang hiển thị "+filtered.length+"."; $("licenseRows").innerHTML=filtered.map(item=>{ const key=item.licenseKey||""; const revoked=!!item.revoked; const deviceIDs=Array.isArray(item.deviceIDs)?item.deviceIDs:(item.deviceID?[item.deviceID]:[]); const maxDevices=Number(item.maxDevices||1); return '<tr>'+'<td><b>'+escapeText(key)+'</b><div class="muted">created: '+escapeText(formatDate(item.createdAt))+'</div></td>'+'<td>'+statusFor(item)+'</td>'+'<td><div style="white-space:pre-line">'+escapeText(deviceIDs.length?deviceIDs.join("\\n"):"Chưa gắn máy")+'</div><div class="muted">blocked: '+escapeText((Array.isArray(item.blockedDeviceIDs)?item.blockedDeviceIDs.length:0))+'</div><div class="muted">app: '+escapeText(item.lastAppVersion||"-")+'</div></td>'+'<td><b>'+escapeText(deviceIDs.length+"/"+maxDevices)+'</b><div class="muted">đang dùng / tối đa</div></td>'+'<td><div>'+escapeText(remainingText(item))+'</div><div class="muted">'+escapeText(formatDate(item.expiresAt))+'</div></td>'+'<td><div>'+escapeText(formatDate(item.lastCheckAt))+'</div><div class="muted">action: '+escapeText(item.lastAction||"-")+'</div></td>'+'<td class="actions">'+'<button class="secondary" onclick="removeSelectedDevice(\\''+escapeText(key)+'\\', '+escapeText(JSON.stringify(deviceIDs))+')">Tháo 1 máy</button>'+'<button class="secondary" onclick="adminAction(\\'reset-device\\', \\''+escapeText(key)+'\\')">Reset tất cả máy</button>'+'<button class="'+(revoked?"green":"warning")+'" onclick="adminAction(\\''+(revoked?"unrevoke":"revoke")+'\\', \\''+escapeText(key)+'\\')">'+(revoked?"Mở khóa":"Khóa")+'</button>'+'<button class="danger" onclick="confirm(\\'Xóa license '+escapeText(key)+'?\\') && adminAction(\\'delete-license\\', \\''+escapeText(key)+'\\')">Xóa</button>'+'</td>'+'</tr>'; }).join(""); }
     restoreToken();
     $("createBtn").addEventListener("click", createLicense);
     $("randomBtn").addEventListener("click", makeRandomKey);
