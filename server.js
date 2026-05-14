@@ -411,7 +411,7 @@ app.get("/admin", (req, res) => {
         return '<tr>' +
           '<td><b>' + escapeText(key) + '</b><div class="muted">created: ' + escapeText(formatDate(item.createdAt)) + '</div></td>' +
           '<td>' + statusFor(item) + '</td>' +
-          '<td><div style="white-space:pre-line">' + escapeText((item.deviceIDs && item.deviceIDs.length ? item.deviceIDs.join("\n") : (item.deviceID || "Chưa gắn máy"))) + '</div><div class="muted">' + escapeText((item.deviceIDs ? item.deviceIDs.length : (item.deviceID ? 1 : 0)) + "/" + (item.maxDevices || 1)) + ' máy</div><div class="muted">app: ' + escapeText(item.lastAppVersion || "-") + '</div></td>' +
+          '<td><div style="white-space:pre-line">' + escapeText((item.deviceIDs && item.deviceIDs.length ? item.deviceIDs.join("\\n") : (item.deviceID || "Chưa gắn máy"))) + '</div><div class="muted">' + escapeText((item.deviceIDs ? item.deviceIDs.length : (item.deviceID ? 1 : 0)) + "/" + (item.maxDevices || 1)) + ' máy</div><div class="muted">app: ' + escapeText(item.lastAppVersion || "-") + '</div></td>' +
           '<td><div>' + escapeText(remainingText(item)) + '</div><div class="muted">' + escapeText(formatDate(item.expiresAt)) + '</div></td>' +
           '<td><div>' + escapeText(formatDate(item.lastCheckAt)) + '</div><div class="muted">action: ' + escapeText(item.lastAction || "-") + '</div></td>' +
           '<td class="actions">' +
