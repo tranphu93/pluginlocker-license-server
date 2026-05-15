@@ -309,6 +309,18 @@ app.post("/api/admin/reset-device", async (req, res) => {
     if (!result) return;
 
     const { license } = result;
+    const devicesToBlock = Array.isArray(license.deviceIDs) ? license.deviceIDs : [];
+
+    if (!Array.isArray(license.blockedDeviceIDs)) {
+      license.blockedDeviceIDs = [];
+    }
+
+    devicesToBlock.forEach(id => {
+      if (id && !license.blockedDeviceIDs.includes(id)) {
+        license.blockedDeviceIDs.push(id);
+      }
+    });
+
     license.deviceID = "";
     license.deviceIDs = [];
     license.lastAction = "reset-device";
@@ -483,6 +495,18 @@ app.post("/admin/reset-device", async (req, res) => {
     if (!result) return;
 
     const { license } = result;
+    const devicesToBlock = Array.isArray(license.deviceIDs) ? license.deviceIDs : [];
+
+    if (!Array.isArray(license.blockedDeviceIDs)) {
+      license.blockedDeviceIDs = [];
+    }
+
+    devicesToBlock.forEach(id => {
+      if (id && !license.blockedDeviceIDs.includes(id)) {
+        license.blockedDeviceIDs.push(id);
+      }
+    });
+
     license.deviceID = "";
     license.deviceIDs = [];
     license.lastAction = "reset-device";
